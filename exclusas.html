@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Simulador de Esclusas Farmacéuticas</title>
+<!-- Librería oficial de Telegram Mini Apps -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+    :root {
+        /* Paleta adaptable. Usa colores de Telegram si existen, sino usa la paleta oscura por defecto */
+        --bg-main: var(--tg-theme-bg-color, #16161e);
+        --bg-card: var(--tg-theme-secondary-bg-color, #1f1f2e);
+        --text-main: var(--tg-theme-text-color, #e0e0e0);
+        --accent: var(--tg-theme-button-color, #4a90e2);
+        --accent-text: var(--tg-theme-button-text-color, #ffffff);
+        --border: #3a3a48;
+    }
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: var(--bg-main);
+        color: var(--text-main);
+        margin: 0;
+        padding: 15px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        box-sizing: border-box;
+    }
+    h1 {
+        color: var(--accent);
+        margin-bottom: 5px;
+        font-size: 1.5em;
+        text-align: center;
+    }
+    p.subtitle {
+        color: #888;
+        margin-bottom: 20px;
+        text-align: center;
+        font-size: 0.9em;
+    }
+    .container {
+        background-color: var(--bg-card);
+        border-radius: 12px;
+        padding: 15px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        width: 100%;
+        max-width: 900px;
+        box-sizing: border-box;
+    }
+    .canvas-wrapper {
+        width: 100%;
+        overflow: hidden;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        margin-bottom: 15px;
+        background-color: #121218;
+    }
+    canvas {
+        display: block;
+        width: 100%;
+        /* Altura base que se ajustará por JS si es necesario */
+        height: 300px; 
+    }
+    .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        background: rgba(0,0,0,0.2);
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+    }
+    .control-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-grow: 1;
+    }
+    select {
+        padding: 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background-color: var(--bg-main);
+        color: var(--text-main);
+        font-size: 1em;
+        cursor: pointer;
+        flex-grow: 1;
+    }
+    .info-panel {
+        background-color: rgba(74, 144, 226, 0.08);
+        border-left: 4px solid var(--accent);
+        padding: 15px;
+        border-radius: 4px;
+        font-size: 0.9em;
+        line-height: 1.5;
+    }
+    .info-panel h3 {
+        margin-top: 0;
+        color: var(--accent);
+        font-size: 1.1em;
+    }
+    .info-panel strong {
+        color: var(--text-main);
+    }
+</style>
+</head>
+<body>
+
+<h1>Diseño de Instalaciones BPF</h1>
+<p class="subtitle">Simulador de Esclusas (Airlocks) y Presiones Diferenciales</p>
+
+<div class="container">
+    <div class="canvas-wrapper">
+        <canvas id="simCanvas"></canvas>
+    </div>
+    
+    <div class="controls">
+        <div class="control-group">
+            <label for="modeSelect"><strong>Modo:</strong></label>
+            <select id="modeSelect">
+                <option value="cascada">Cascada (Flujo a Pasillo)</option>
+                <option value="burbuja">Burbuja (Aislamiento Total)</option>
+                <option value="sumidero">Sumidero (Contención Tóxica)</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="info-panel" id="infoPanel">
+        <!-- Contenido dinámico -->
+    </div>
+</div>
+
+<script>
+    // Inicialización para Telegram Mini App
+    if (window.Telegram && window.Telegram.WebApp) {
+        window.Telegram.WebApp.ready();
+        window.Telegram.WebApp.expand(); // Expande la app a pantalla completa en el móvil
+    }
+
+    const canvas = document.getElementById('simCanvas');
+    const ctx = canvas.getContext('2d');
+    const modeSelect = document.getElementById('modeSelect');
+    const infoPanel = document.getElementById('infoPanel');
+
+    // Datos técnicos explicativos
+    const infoData = {
+        cascada: {
+            title: "Esclusa en Cascada (Cascade Airlock)",
+            presiones: "Pasillo (-) | Esclusa (+) | Cuarto Limpio (++)",
+            uso: "Manufactura estándar, pesadas, compresión y áreas estériles generales.",
+            porQue: "La presión más alta está en el Cuarto Limpio. El flujo de aire 'barre' la contaminación hacia afuera. Protege al medicamento de la suciedad del pasillo (evita resultados OOS)."
+        },
+        burbuja: {
+            title: "Esclusa de Burbuja (Bubble Airlock)",
+            presiones: "Pasillo (-) | Esclusa (++) | Cuarto Limpio (+)",
+            uso: "Áreas altamente críticas, inyectables asépticos, llenado estéril.",
+            porQue: "La esclusa tiene la presión máxima. Actúa como un 'escudo inflado' que empuja el aire hacia ambos lados. Ni el pasillo entra al cuarto, ni el cuarto sale al pasillo."
+        },
+        sumidero: {
+            title: "Esclusa de Sumidero (Sink Airlock)",
+            presiones: "Pasillo (+) | Esclusa (-) | Cuarto Limpio (++)",
+            uso: "Manufactura de Oncológicos, Hormonas, Penicilínicos y tóxicos.",
+            porQue: "La esclusa succiona (presión negativa). Su objetivo es proteger al Operador. Atrapa los polvos tóxicos en el medio para que no salgan al pasillo común."
+        }
+    };
+
+    let particles = [];
+    let mode = 'cascada'; 
+    const numParticles = 100;
+
+    // Ajustar el canvas a la pantalla dinámicamente
+    function resizeCanvas() {
+        const wrapper = canvas.parentElement;
+        canvas.width = wrapper.clientWidth;
+        canvas.height = wrapper.clientHeight || 300;
+        initParticles(); // Reiniciar al cambiar tamaño
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // BUCLE INFINITO (FIX): Función para generar una partícula nueva en una zona específica
+    function spawnParticle(zona) {
+        let x = 0;
+        let y = 30 + Math.random() * (canvas.height - 60);
+        let vy = (Math.random() - 0.5) * 1.5;
+        
+        if (zona === 'derecha') x = canvas.width - 5;
+        if (zona === 'centro') x = (canvas.width / 2) + (Math.random() * 20 - 10);
+        if (zona === 'izquierda') x = 5;
+        if (zona === 'aleatorio') x = Math.random() * canvas.width;
+
+        return { x, y, vx: 0, vy };
+    }
+
+    // Inicializar partículas
+    function initParticles() {
+        particles = [];
+        for (let i = 0; i < numParticles; i++) {
+            particles.push(spawnParticle('aleatorio'));
+        }
+    }
+
+    function updateInfo() {
+        const data = infoData[mode];
+        infoPanel.innerHTML = `
+            <h3>${data.title}</h3>
+            <p style="margin:5px 0;"><strong>Presiones:</strong> <span style="color:#feca57">${data.presiones}</span></p>
+            <p style="margin:5px 0;"><strong>Uso:</strong> ${data.uso}</p>
+            <p style="margin:5px 0; font-size:0.9em; color:#bbb;"><strong>Mecanismo:</strong> ${data.porQue}</p>
+        `;
+    }
+
+    function drawArchitecture() {
+        const w3 = canvas.width / 3;
+        const w23 = canvas.width * 2 / 3;
+        
+        // Textos
+        ctx.fillStyle = "#ffffff";
+        // Tamaño de fuente dinámico según el ancho
+        let fontSize = canvas.width < 500 ? "12px" : "16px";
+        ctx.font = `bold ${fontSize} 'Segoe UI'`;
+        ctx.textAlign = "center";
+        
+        ctx.fillText("Pasillo", w3 / 2, 25);
+        ctx.fillText("Esclusa", canvas.width / 2, 25);
+        ctx.fillText("Cuarto Limpio", w23 + (w3 / 2), 25);
+        
+        // Paredes punteadas
+        ctx.strokeStyle = "#4a4a5e";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath(); ctx.moveTo(w3, 40); ctx.lineTo(w3, canvas.height - 20); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(w23, 40); ctx.lineTo(w23, canvas.height - 20); ctx.stroke();
+        ctx.setLineDash([]);
+        
+        // Representación de Puertas
+        ctx.fillStyle = "#1e1e24";
+        ctx.strokeStyle = "#ffffff";
+        ctx.fillRect(w3 - 6, canvas.height / 2 - 15, 12, 30);
+        ctx.strokeRect(w3 - 6, canvas.height / 2 - 15, 12, 30);
+        ctx.fillRect(w23 - 6, canvas.height / 2 - 15, 12, 30);
+        ctx.strokeRect(w23 - 6, canvas.height / 2 - 15, 12, 30);
+    }
+
+    function drawPressures() {
+        ctx.font = "bold 24px 'Segoe UI'";
+        ctx.textAlign = "center";
+        
+        let p1, p2, p3;
+        let c1 = "#ff6b81", c2 = "#feca57", c3 = "#48dbfb"; // Rojo(-), Amarillo(+), Azul(++)
+
+        if (mode === 'cascada') { p1 = "-"; p2 = "+"; p3 = "++"; } 
+        else if (mode === 'burbuja') { p1 = "-"; p2 = "++"; p3 = "+"; c2 = "#48dbfb"; c3 = "#feca57"; } 
+        else if (mode === 'sumidero') { p1 = "+"; p2 = "-"; p3 = "++"; c1 = "#feca57"; c2 = "#ff6b81"; c3 = "#48dbfb"; }
+
+        const h = canvas.height / 2;
+        ctx.fillStyle = c1; ctx.fillText(p1, canvas.width / 6, h);
+        ctx.fillStyle = c2; ctx.fillText(p2, canvas.width / 2, h);
+        ctx.fillStyle = c3; ctx.fillText(p3, canvas.width * 5 / 6, h);
+    }
+
+    // EL BUCLE REPARADO: Lógica de física y regeneración de partículas
+    function updatePhysics() {
+        const w3 = canvas.width / 3;
+        const w23 = canvas.width * 2 / 3;
+
+        for (let i = 0; i < particles.length; i++) {
+            let p = particles[i];
+            let forceX = 0;
+            
+            if (mode === 'cascada') {
+                forceX = -2; // Flujo constante a la izquierda
+                p.x += forceX + (Math.random() - 0.5);
+                // Loop: Si sale por la izquierda, nace en la derecha
+                if (p.x < 0) particles[i] = spawnParticle('derecha');
+                
+            } else if (mode === 'burbuja') {
+                forceX = (p.x < canvas.width / 2) ? -2 : 2; // Del centro hacia afuera
+                p.x += forceX + (Math.random() - 0.5);
+                // Loop: Si sale por los lados, nace de nuevo en el centro (fuente)
+                if (p.x < 0 || p.x > canvas.width) particles[i] = spawnParticle('centro');
+                
+            } else if (mode === 'sumidero') {
+                if (p.x < w3) forceX = 2; // Del pasillo a la esclusa
+                else if (p.x > w23) forceX = -2; // Del cuarto a la esclusa
+                else forceX = (p.x < canvas.width / 2) ? 0.5 : -0.5; // Atrapados en el centro
+                
+                p.x += forceX + (Math.random() - 0.5) * 1.5;
+                
+                // Loop: Para evitar que todas se acumulen estáticas en el centro,
+                // matamos unas cuantas al azar y las renacemos en los bordes para mantener el flujo visual.
+                if (p.x > w3 && p.x < w23) {
+                    if (Math.random() < 0.015) { // 1.5% de probabilidad por frame de reciclarse
+                        particles[i] = spawnParticle(Math.random() > 0.5 ? 'izquierda' : 'derecha');
+                    }
+                }
+            }
+
+            p.y += p.vy;
+            if (p.y < 30 || p.y > canvas.height - 30) p.vy *= -1; // Rebote vertical
+        }
+    }
+
+    function drawParticles() {
+        ctx.fillStyle = "rgba(255, 107, 129, 0.7)";
+        particles.forEach(p => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+        });
+    }
+
+    function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawArchitecture();
+        drawPressures();
+        updatePhysics();
+        drawParticles();
+        requestAnimationFrame(animate);
+    }
+
+    // Eventos
+    modeSelect.addEventListener('change', (e) => {
+        mode = e.target.value;
+        updateInfo();
+        initParticles(); // Dispersar al cambiar de modo para ver el nuevo flujo
+    });
+
+    // Arrancar
+    resizeCanvas();
+    updateInfo();
+    animate();
+
+</script>
+</body>
+</html>
